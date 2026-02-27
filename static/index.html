@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NBA API Explorer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #12151c;
+    --surface2: #1a1e28;
+    --border: #252a36;
+    --text: #e2e4e9;
+    --text2: #8b8fa3;
+    --accent: #f97316;
+    --accent2: #fb923c;
+    --blue: #3b82f6;
+    --green: #22c55e;
+    --red: #ef4444;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+    --node-r: 38;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  .app-shell {
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    grid-template-rows: 56px 1fr;
+    height: 100vh;
+  }
+
+  /* ── Header ─────────────────────────────────────── */
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+  header .logo {
+    font-weight: 900;
+    font-size: 18px;
+    letter-spacing: -0.5px;
+    color: var(--accent);
+  }
+  header .logo span { color: var(--text2); font-weight: 300; }
+  header .pill {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+  }
+  header .pill.live { border-color: var(--green); color: var(--green); }
+  header .pill.mock { border-color: var(--accent); color: var(--accent); }
+  .spacer { flex: 1; }
+  header .hint {
+    font-size: 12px;
+    color: var(--text2);
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* ── Canvas Area ────────────────────────────────── */
+  .canvas-wrap {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 30% 40%, rgba(249,115,22,0.04) 0%, transparent 50%),
+      radial-gradient(circle at 70% 60%, rgba(59,130,246,0.03) 0%, transparent 50%),
+      var(--bg);
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  canvas:active { cursor: grabbing; }
+  .canvas-overlay {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    gap: 8px;
+  }
+  .canvas-overlay button {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    padding: 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .canvas-overlay button:hover {
+    background: var(--surface2);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  /* ── Side Panel ─────────────────────────────────── */
+  .panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .panel-header h2 {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+  .panel-header .endpoint-tag {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: rgba(249,115,22,0.12);
+    color: var(--accent);
+    border-radius: 4px;
+  }
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  /* ── Breadcrumb Trail ───────────────────────────── */
+  .breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 16px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+  }
+  .breadcrumb .crumb {
+    padding: 2px 8px;
+    background: var(--surface2);
+    border-radius: 4px;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .breadcrumb .crumb:hover { color: var(--accent); }
+  .breadcrumb .crumb.active { background: rgba(249,115,22,0.15); color: var(--accent); }
+  .breadcrumb .sep { color: var(--border); line-height: 22px; }
+
+  /* ── Params Form ────────────────────────────────── */
+  .params-section {
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--surface2);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .params-section label {
+    display: block;
+    font-size: 11px;
+    font-family: 'DM Mono', monospace;
+    color: var(--text2);
+    margin-bottom: 6px;
+  }
+  .params-section .param-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .params-section input, .params-section select {
+    flex: 1;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    outline: none;
+  }
+  .params-section input:focus { border-color: var(--accent); }
+  .fetch-btn {
+    width: 100%;
+    padding: 8px;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .fetch-btn:hover { background: var(--accent2); }
+  .fetch-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Data Table ─────────────────────────────────── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+  .data-table th {
+    text-align: left;
+    padding: 6px 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+  }
+  .data-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text);
+  }
+  .data-table tr { cursor: pointer; transition: background 0.1s; }
+  .data-table tr:hover { background: rgba(249,115,22,0.06); }
+  .data-table .num { text-align: right; color: var(--cyan); }
+
+  /* ── Chart Canvas ───────────────────────────────── */
+  .chart-wrap {
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--surface2);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .chart-wrap h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text2);
+    margin-bottom: 10px;
+  }
+  .chart-wrap canvas {
+    cursor: default;
+    border-radius: 4px;
+  }
+  .chart-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .chart-tabs button {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 3px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text2);
+    cursor: pointer;
+  }
+  .chart-tabs button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(249,115,22,0.1);
+  }
+
+  /* ── Empty State ────────────────────────────────── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    text-align: center;
+    color: var(--text2);
+    gap: 12px;
+  }
+  .empty-state .icon { font-size: 48px; opacity: 0.3; }
+  .empty-state p { font-size: 13px; max-width: 240px; line-height: 1.5; }
+
+  /* ── Loading Spinner ────────────────────────────── */
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px;
+    color: var(--text2);
+    font-size: 12px;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── JSON Drawer ────────────────────────────────── */
+  .json-toggle {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text2);
+    cursor: pointer;
+    padding: 8px 0;
+    user-select: none;
+  }
+  .json-toggle:hover { color: var(--accent); }
+  .json-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text2);
+    margin-top: 8px;
+  }
+
+  /* ── Clickable row highlight ────────────────────── */
+  .clickable-row { position: relative; }
+  .clickable-row::after {
+    content: '→';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    opacity: 0;
+    transition: opacity 0.15s;
+    font-size: 12px;
+  }
+  .clickable-row:hover::after { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="app-shell">
+    <!-- Header -->
+    <header>
+      <div class="logo">NBA<span>EXPLORER</span></div>
+      <div class="pill live">LIVE DATA</div>
+      <div class="pill">v0.1 MVP</div>
+      <div class="spacer"></div>
+      <div class="hint">click nodes to traverse · drag to pan</div>
+    </header>
+
+    <!-- Canvas -->
+    <div class="canvas-wrap" ref="canvasWrap">
+      <canvas ref="graphCanvas"
+        @mousedown="onCanvasMouseDown"
+        @mousemove="onCanvasMouseMove"
+        @mouseup="onCanvasMouseUp"
+        @mouseleave="onCanvasMouseUp"
+        @click="onCanvasClick"
+        @wheel="onCanvasWheel"
+      ></canvas>
+      <div class="canvas-overlay">
+        <button @click="resetView">Reset View</button>
+        <button @click="fitGraph">Fit Graph</button>
+      </div>
+    </div>
+
+    <!-- Side Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2>{{ activeNode ? apiMap[activeNode]?.label : 'API Explorer' }}</h2>
+        <span v-if="activeNode && apiMap[activeNode]?.endpoint" class="endpoint-tag">
+          {{ apiMap[activeNode].endpoint }}
+        </span>
+      </div>
+      <div class="panel-body">
+        <!-- Empty state -->
+        <div v-if="!activeNode" class="empty-state">
+          <div class="icon">🏀</div>
+          <p>Click a node on the graph to explore NBA API endpoints and visualize data</p>
+        </div>
+
+        <!-- Active node content -->
+        <template v-else>
+          <!-- Breadcrumb -->
+          <div class="breadcrumb" v-if="trail.length">
+            <template v-for="(crumb, i) in trail" :key="i">
+              <span class="crumb" :class="{ active: i === trail.length - 1 }" @click="navigateTo(crumb)">
+                {{ apiMap[crumb]?.label }}
+              </span>
+              <span v-if="i < trail.length - 1" class="sep">›</span>
+            </template>
+          </div>
+
+          <!-- Description -->
+          <p style="font-size:13px; color:var(--text2); margin-bottom:14px;">
+            {{ apiMap[activeNode]?.description }}
+          </p>
+
+          <!-- Params + Fetch -->
+          <div class="params-section" v-if="apiMap[activeNode]?.endpoint">
+            <label>PARAMETERS</label>
+            <div v-for="p in (apiMap[activeNode]?.params || [])" :key="p.name" class="param-row">
+              <span style="font-family:'DM Mono',monospace; font-size:11px; color:var(--accent); min-width:70px;">
+                {{ p.name }}
+              </span>
+              <input v-model="paramValues[p.name]" :placeholder="p.type + (p.optional ? ' (optional)' : '')" />
+            </div>
+            <button class="fetch-btn" @click="fetchEndpoint" :disabled="loading">
+              {{ loading ? 'FETCHING...' : 'FETCH DATA' }}
+            </button>
+          </div>
+
+          <!-- Loading -->
+          <div v-if="loading" class="loading">
+            <div class="spinner"></div>
+            Fetching...
+          </div>
+
+          <!-- Chart -->
+          <div v-if="chartData && chartData.length > 1" class="chart-wrap">
+            <h3>Data Visualization</h3>
+            <div class="chart-tabs">
+              <button v-for="metric in chartMetrics" :key="metric"
+                :class="{ active: activeMetric === metric }"
+                @click="activeMetric = metric; drawChart();">
+                {{ metric }}
+              </button>
+            </div>
+            <canvas ref="chartCanvas" width="360" height="180"></canvas>
+          </div>
+
+          <!-- Data Table -->
+          <template v-if="responseData && responseData.length">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th v-for="col in tableCols" :key="col">{{ col }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, i) in responseData" :key="i"
+                    :class="{ 'clickable-row': canDrill(row) }"
+                    @click="drillInto(row)">
+                  <td v-for="col in tableCols" :key="col"
+                      :class="{ num: typeof row[col] === 'number' }">
+                    {{ row[col] }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+
+          <!-- Single object -->
+          <template v-if="responseData && !Array.isArray(responseData)">
+            <table class="data-table">
+              <tbody>
+                <tr v-for="(val, key) in flatObject(responseData)" :key="key">
+                  <td style="color:var(--text2);">{{ key }}</td>
+                  <td :class="{ num: typeof val === 'number' }">{{ val }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+
+          <!-- Raw JSON toggle -->
+          <div v-if="rawResponse" class="json-toggle" @click="showJson = !showJson">
+            {{ showJson ? '▾ Hide' : '▸ Show' }} Raw JSON
+          </div>
+          <div v-if="showJson && rawResponse" class="json-block">{{ JSON.stringify(rawResponse, null, 2) }}</div>
+
+          <!-- Children links -->
+          <div v-if="apiMap[activeNode]?.children?.length" style="margin-top:16px;">
+            <label style="font-size:11px; font-family:'DM Mono',monospace; color:var(--text2); display:block; margin-bottom:8px;">
+              NAVIGATE TO
+            </label>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button v-for="child in apiMap[activeNode].children" :key="child"
+                @click="navigateTo(child)"
+                style="font-family:'DM Mono',monospace; font-size:12px; padding:6px 14px;
+                       background:var(--surface2); border:1px solid var(--border);
+                       border-radius:6px; color:var(--text); cursor:pointer;">
+                {{ apiMap[child]?.label }}
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
+
+const API_BASE = '';
+
+// ── Hardcoded API map (works without backend) ────────────────────────────────
+const FALLBACK_MAP = {
+  root:          { label:"NBA API",       description:"Entry point — click to explore",           children:["teams","players","standings","games"], params:[] },
+  teams:         { label:"Teams",         description:"All NBA teams",                            children:["team_detail"], endpoint:"/api/teams", params:[] },
+  players:       { label:"Players",       description:"All players, optionally filtered by team", children:["player_detail"], endpoint:"/api/players", params:[{name:"team_id",type:"int",optional:true}] },
+  standings:     { label:"Standings",     description:"Current conference standings",             children:[], endpoint:"/api/standings", params:[{name:"conference",type:"str",optional:true}] },
+  games:         { label:"Games",         description:"Recent game results",                     children:["game_detail"], endpoint:"/api/games", params:[{name:"date",type:"str",optional:true}] },
+  team_detail:   { label:"Team Detail",   description:"Single team info + roster",                children:["players"], endpoint:"/api/teams/{id}", params:[{name:"id",type:"int",required:true}] },
+  player_detail: { label:"Player Detail", description:"Player averages & info",                  children:["game_log"], endpoint:"/api/players/{id}", params:[{name:"id",type:"int",required:true}] },
+  game_log:      { label:"Game Log",      description:"Per-game stats time series",              children:[], endpoint:"/api/players/{id}/gamelog", params:[{name:"id",type:"int",required:true},{name:"n",type:"int",optional:true}] },
+  game_detail:   { label:"Game Detail",   description:"Full box score",                          children:["player_detail"], endpoint:"/api/games/{id}", params:[{name:"id",type:"int",required:true}] },
+};
+
+// ── Node layout positions (hand-tuned radial) ────────────────────────────────
+function computeLayout() {
+  const cx = 480, cy = 320;
+  return {
+    root:          { x: cx,       y: cy },
+    teams:         { x: cx - 220, y: cy - 180 },
+    players:       { x: cx + 220, y: cy - 180 },
+    standings:     { x: cx - 280, y: cy + 120 },
+    games:         { x: cx + 280, y: cy + 120 },
+    team_detail:   { x: cx - 340, y: cy - 60 },
+    player_detail: { x: cx + 100, y: cy - 40 },
+    game_log:      { x: cx + 100, y: cy + 140 },
+    game_detail:   { x: cx + 360, y: cy - 20 },
+  };
+}
+
+// ── Colors per node ──────────────────────────────────────────────────────────
+const NODE_COLORS = {
+  root: '#f97316',
+  teams: '#3b82f6',
+  players: '#22c55e',
+  standings: '#a855f7',
+  games: '#ef4444',
+  team_detail: '#3b82f6',
+  player_detail: '#22c55e',
+  game_log: '#06b6d4',
+  game_detail: '#ef4444',
+};
+
+createApp({
+  setup() {
+    const graphCanvas = ref(null);
+    const chartCanvas = ref(null);
+    const canvasWrap = ref(null);
+
+    const apiMap = reactive({...FALLBACK_MAP});
+    const nodePositions = reactive(computeLayout());
+
+    // State
+    const activeNode = ref(null);
+    const trail = ref([]);
+    const paramValues = reactive({});
+    const loading = ref(false);
+    const responseData = ref(null);
+    const rawResponse = ref(null);
+    const showJson = ref(false);
+    const chartData = ref(null);
+    const chartMetrics = ref([]);
+    const activeMetric = ref('');
+
+    // Camera
+    const cam = reactive({ x: 0, y: 0, zoom: 1 });
+    let dragging = false, dragStart = { x: 0, y: 0 }, camStart = { x: 0, y: 0 };
+    let hoveredNode = null;
+
+    // ── Graph Drawing ────────────────────────────────────────────────────────
+    function drawGraph() {
+      const canvas = graphCanvas.value;
+      if (!canvas) return;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      ctx.save();
+      ctx.translate(cam.x + rect.width / 2, cam.y + rect.height / 2);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.translate(-480, -320);
+
+      // Draw edges
+      for (const [key, node] of Object.entries(apiMap)) {
+        if (!node.children) continue;
+        const from = nodePositions[key];
+        if (!from) continue;
+        for (const child of node.children) {
+          const to = nodePositions[child];
+          if (!to) continue;
+          ctx.beginPath();
+          ctx.moveTo(from.x, from.y);
+          // Curved edges
+          const mx = (from.x + to.x) / 2;
+          const my = (from.y + to.y) / 2 - 20;
+          ctx.quadraticCurveTo(mx, my, to.x, to.y);
+          ctx.strokeStyle = (activeNode.value === key || activeNode.value === child)
+            ? 'rgba(249,115,22,0.4)' : 'rgba(255,255,255,0.06)';
+          ctx.lineWidth = (activeNode.value === key || activeNode.value === child) ? 2 : 1;
+          ctx.stroke();
+
+          // Arrow
+          const angle = Math.atan2(to.y - my, to.x - mx);
+          const arrowR = 42;
+          const ax = to.x - Math.cos(angle) * arrowR;
+          const ay = to.y - Math.sin(angle) * arrowR;
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(ax - 8 * Math.cos(angle - 0.4), ay - 8 * Math.sin(angle - 0.4));
+          ctx.lineTo(ax - 8 * Math.cos(angle + 0.4), ay - 8 * Math.sin(angle + 0.4));
+          ctx.closePath();
+          ctx.fillStyle = (activeNode.value === key || activeNode.value === child)
+            ? 'rgba(249,115,22,0.5)' : 'rgba(255,255,255,0.08)';
+          ctx.fill();
+        }
+      }
+
+      // Draw nodes
+      const R = 36;
+      for (const [key, pos] of Object.entries(nodePositions)) {
+        const isActive = activeNode.value === key;
+        const isHovered = hoveredNode === key;
+        const color = NODE_COLORS[key] || '#888';
+
+        // Glow
+        if (isActive || isHovered) {
+          const grad = ctx.createRadialGradient(pos.x, pos.y, R * 0.5, pos.x, pos.y, R * 2.5);
+          grad.addColorStop(0, color + '30');
+          grad.addColorStop(1, 'transparent');
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, R * 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = grad;
+          ctx.fill();
+        }
+
+        // Node circle
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, R, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? color + '22' : '#12151c';
+        ctx.fill();
+        ctx.strokeStyle = isActive ? color : (isHovered ? color + 'aa' : '#252a36');
+        ctx.lineWidth = isActive ? 2.5 : 1.5;
+        ctx.stroke();
+
+        // Dot indicator
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y - 8, 4, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // Label
+        ctx.font = '500 12px Outfit';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = isActive ? '#fff' : '#8b8fa3';
+        ctx.fillText(apiMap[key]?.label || key, pos.x, pos.y + 10);
+      }
+
+      ctx.restore();
+    }
+
+    // ── Hit Test ─────────────────────────────────────────────────────────────
+    function hitTest(mx, my) {
+      const canvas = graphCanvas.value;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      // Invert camera transform
+      const wx = (mx - cam.x - rect.width / 2) / cam.zoom + 480;
+      const wy = (my - cam.y - rect.height / 2) / cam.zoom + 320;
+      for (const [key, pos] of Object.entries(nodePositions)) {
+        const dx = wx - pos.x, dy = wy - pos.y;
+        if (Math.sqrt(dx * dx + dy * dy) < 40) return key;
+      }
+      return null;
+    }
+
+    // ── Canvas Events ────────────────────────────────────────────────────────
+    function onCanvasMouseDown(e) {
+      dragging = true;
+      dragStart = { x: e.offsetX, y: e.offsetY };
+      camStart = { x: cam.x, y: cam.y };
+    }
+    function onCanvasMouseMove(e) {
+      if (dragging) {
+        cam.x = camStart.x + (e.offsetX - dragStart.x);
+        cam.y = camStart.y + (e.offsetY - dragStart.y);
+        drawGraph();
+      } else {
+        const hit = hitTest(e.offsetX, e.offsetY);
+        if (hit !== hoveredNode) {
+          hoveredNode = hit;
+          graphCanvas.value.style.cursor = hit ? 'pointer' : 'grab';
+          drawGraph();
+        }
+      }
+    }
+    function onCanvasMouseUp() { dragging = false; }
+    function onCanvasClick(e) {
+      if (Math.abs(e.offsetX - dragStart.x) > 5 || Math.abs(e.offsetY - dragStart.y) > 5) return;
+      const hit = hitTest(e.offsetX, e.offsetY);
+      if (hit) navigateTo(hit);
+    }
+    function onCanvasWheel(e) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      cam.zoom = Math.max(0.3, Math.min(3, cam.zoom * delta));
+      drawGraph();
+    }
+
+    // ── Navigation ───────────────────────────────────────────────────────────
+    function navigateTo(nodeKey) {
+      activeNode.value = nodeKey;
+      // Update trail
+      const idx = trail.value.indexOf(nodeKey);
+      if (idx >= 0) {
+        trail.value = trail.value.slice(0, idx + 1);
+      } else {
+        trail.value.push(nodeKey);
+      }
+      // Reset data
+      responseData.value = null;
+      rawResponse.value = null;
+      chartData.value = null;
+      showJson.value = false;
+      // Reset params
+      Object.keys(paramValues).forEach(k => delete paramValues[k]);
+      drawGraph();
+      // Auto-fetch if no required params
+      const node = apiMap[nodeKey];
+      if (node?.endpoint && !(node.params || []).some(p => p.required)) {
+        fetchEndpoint();
+      }
+    }
+
+    // ── Fetch ────────────────────────────────────────────────────────────────
+    async function fetchEndpoint() {
+      const node = apiMap[activeNode.value];
+      if (!node?.endpoint) return;
+
+      let url = API_BASE + node.endpoint;
+      // Replace path params
+      for (const p of (node.params || [])) {
+        if (paramValues[p.name]) {
+          url = url.replace(`{${p.name}}`, paramValues[p.name]);
+        }
+      }
+      // Query params
+      const qp = new URLSearchParams();
+      for (const p of (node.params || [])) {
+        if (paramValues[p.name] && !node.endpoint.includes(`{${p.name}}`)) {
+          qp.set(p.name, paramValues[p.name]);
+        }
+      }
+      const qs = qp.toString();
+      if (qs) url += '?' + qs;
+
+      loading.value = true;
+      try {
+        const res = await fetch(url);
+        const json = await res.json();
+        rawResponse.value = json;
+        const data = json.data;
+        responseData.value = data;
+
+        // Auto-detect chartable data
+        if (Array.isArray(data) && data.length > 1) {
+          const numKeys = Object.keys(data[0]).filter(k => typeof data[0][k] === 'number');
+          chartMetrics.value = numKeys;
+          chartData.value = data;
+          activeMetric.value = numKeys[0] || '';
+          await nextTick();
+          drawChart();
+        }
+      } catch (err) {
+        rawResponse.value = { error: 'Failed to fetch. Is the Flask server running? → python server.py' };
+        responseData.value = null;
+      }
+      loading.value = false;
+    }
+
+    // ── Chart Drawing ────────────────────────────────────────────────────────
+    function drawChart() {
+      const canvas = chartCanvas.value;
+      if (!canvas || !chartData.value) return;
+      const ctx = canvas.getContext('2d');
+      const W = 360, H = 180;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, W, H);
+
+      const data = chartData.value;
+      const metric = activeMetric.value;
+      if (!metric) return;
+
+      const values = data.map(d => d[metric]).filter(v => typeof v === 'number');
+      if (!values.length) return;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+      const pad = { t: 10, r: 10, b: 30, l: 45 };
+      const gw = W - pad.l - pad.r;
+      const gh = H - pad.t - pad.b;
+
+      // Grid lines
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.t + gh * (i / 4);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(W - pad.r, y);
+        ctx.stroke();
+        // Label
+        ctx.font = '10px DM Mono';
+        ctx.fillStyle = '#555';
+        ctx.textAlign = 'right';
+        const val = max - (range * i / 4);
+        ctx.fillText(val.toFixed(1), pad.l - 6, y + 3);
+      }
+
+      // Determine chart type: bar for <=15 items, line for more
+      const isBar = values.length <= 15;
+      const color = NODE_COLORS[activeNode.value] || '#f97316';
+
+      if (isBar) {
+        const bw = Math.min(24, (gw / values.length) * 0.7);
+        const gap = gw / values.length;
+        values.forEach((v, i) => {
+          const x = pad.l + i * gap + gap / 2;
+          const h = ((v - min) / range) * gh;
+          const y = pad.t + gh - h;
+          // Bar
+          const grad = ctx.createLinearGradient(x, y, x, pad.t + gh);
+          grad.addColorStop(0, color);
+          grad.addColorStop(1, color + '33');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.roundRect(x - bw / 2, y, bw, h, [3, 3, 0, 0]);
+          ctx.fill();
+          // X label
+          ctx.font = '9px DM Mono';
+          ctx.fillStyle = '#555';
+          ctx.textAlign = 'center';
+          const label = data[i].name || data[i].abbrev || data[i].game || data[i].date || (i + 1);
+          ctx.fillText(String(label).substring(0, 6), x, H - pad.b + 14);
+        });
+      } else {
+        // Line chart
+        const step = gw / (values.length - 1);
+        // Area fill
+        ctx.beginPath();
+        ctx.moveTo(pad.l, pad.t + gh);
+        values.forEach((v, i) => {
+          const x = pad.l + i * step;
+          const y = pad.t + gh - ((v - min) / range) * gh;
+          if (i === 0) ctx.lineTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.lineTo(pad.l + (values.length - 1) * step, pad.t + gh);
+        ctx.closePath();
+        ctx.fillStyle = color + '15';
+        ctx.fill();
+
+        // Line
+        ctx.beginPath();
+        values.forEach((v, i) => {
+          const x = pad.l + i * step;
+          const y = pad.t + gh - ((v - min) / range) * gh;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Dots
+        values.forEach((v, i) => {
+          const x = pad.l + i * step;
+          const y = pad.t + gh - ((v - min) / range) * gh;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+        });
+      }
+
+      // Metric label
+      ctx.font = '500 11px Outfit';
+      ctx.fillStyle = color;
+      ctx.textAlign = 'left';
+      ctx.fillText(metric.toUpperCase(), pad.l, H - 4);
+    }
+
+    // ── Table helpers ────────────────────────────────────────────────────────
+    const tableCols = computed(() => {
+      const data = responseData.value;
+      if (!data || !Array.isArray(data) || !data.length) return [];
+      // Exclude nested objects/arrays from table
+      return Object.keys(data[0]).filter(k => {
+        const v = data[0][k];
+        return typeof v !== 'object' || v === null;
+      });
+    });
+
+    function flatObject(obj) {
+      const flat = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v !== 'object' || v === null) flat[k] = v;
+      }
+      return flat;
+    }
+
+    function canDrill(row) {
+      return row.id !== undefined;
+    }
+
+    function drillInto(row) {
+      if (!row.id) return;
+      const node = apiMap[activeNode.value];
+      if (!node?.children?.length) return;
+      // Guess which child to go to
+      const child = node.children[0];
+      navigateTo(child);
+      // Pre-fill the id param
+      nextTick(() => { paramValues.id = row.id; });
+    }
+
+    function resetView() {
+      cam.x = 0; cam.y = 0; cam.zoom = 1;
+      drawGraph();
+    }
+
+    function fitGraph() {
+      cam.x = 0; cam.y = 0; cam.zoom = 0.85;
+      drawGraph();
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+    onMounted(async () => {
+      drawGraph();
+      window.addEventListener('resize', drawGraph);
+      // Try to load map from backend
+      try {
+        const res = await fetch(API_BASE + '/api/map');
+        const map = await res.json();
+        Object.assign(apiMap, map);
+      } catch (e) {
+        // Use fallback map
+      }
+    });
+
+    return {
+      graphCanvas, chartCanvas, canvasWrap,
+      apiMap, activeNode, trail, paramValues, loading,
+      responseData, rawResponse, showJson,
+      chartData, chartMetrics, activeMetric,
+      tableCols,
+      onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseUp,
+      onCanvasClick, onCanvasWheel,
+      navigateTo, fetchEndpoint, drawChart,
+      resetView, fitGraph,
+      flatObject, canDrill, drillInto,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
