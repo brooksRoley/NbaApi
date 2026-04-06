@@ -496,6 +496,34 @@
             </table>
           </template>
 
+          <!-- Nested arrays (analytics endpoints return object-of-arrays) -->
+          <template v-if="nestedArrays.length">
+            <div v-for="{ key, arr } in nestedArrays" :key="key" style="margin-bottom:18px;">
+              <div style="font-family:'DM Mono',monospace; font-size:10px; text-transform:uppercase;
+                          letter-spacing:1px; color:var(--text2); margin-bottom:8px;">
+                {{ key.replace(/_/g,' ') }}
+                <span style="color:var(--border);">({{ arr.length }})</span>
+              </div>
+              <div style="overflow-x:auto;">
+                <table class="data-table">
+                  <thead>
+                    <tr><th v-for="col in flatCols(arr)" :key="col">{{ col }}</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, i) in arr" :key="i"
+                        :class="{ 'clickable-row': row.id !== undefined }"
+                        @click="row.id !== undefined && drillInto(row)">
+                      <td v-for="col in flatCols(arr)" :key="col"
+                          :class="{ num: typeof row[col] === 'number' }">
+                        {{ row[col] }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+
           <!-- Raw JSON toggle -->
           <div v-if="rawResponse" class="json-toggle" @click="showJson = !showJson">
             {{ showJson ? '▾ Hide' : '▸ Show' }} Raw JSON
@@ -530,44 +558,59 @@ const API_BASE = '';
 
 // ── Hardcoded API map (works without backend) ────────────────────────────────
 const FALLBACK_MAP = {
-  root:          { label:"NBA API",       description:"Entry point — click to explore",           children:["teams","players","standings","games"], params:[] },
-  teams:         { label:"Teams",         description:"All NBA teams",                            children:["team_detail"], endpoint:"/api/teams", params:[] },
-  players:       { label:"Players",       description:"All players, optionally filtered by team", children:["player_detail"], endpoint:"/api/players", params:[{name:"team_id",type:"int",optional:true}] },
-  standings:     { label:"Standings",     description:"Current conference standings",             children:[], endpoint:"/api/standings", params:[{name:"conference",type:"str",optional:true}] },
-  games:         { label:"Games",         description:"Recent game results",                     children:["game_detail"], endpoint:"/api/games", params:[{name:"date",type:"str",optional:true}] },
-  team_detail:   { label:"Team Detail",   description:"Single team info + roster",                children:["players"], endpoint:"/api/teams/{id}", params:[{name:"id",type:"int",required:true}] },
-  player_detail: { label:"Player Detail", description:"Player averages & info",                  children:["game_log"], endpoint:"/api/players/{id}", params:[{name:"id",type:"int",required:true}] },
-  game_log:      { label:"Game Log",      description:"Per-game stats time series",              children:[], endpoint:"/api/players/{id}/gamelog", params:[{name:"id",type:"int",required:true},{name:"n",type:"int",optional:true}] },
-  game_detail:   { label:"Game Detail",   description:"Full box score",                          children:["player_detail"], endpoint:"/api/games/{id}", params:[{name:"id",type:"int",required:true}] },
+  root:             { label:"NBA API",          description:"Entry point — click to explore",           children:["teams","players","standings","games","analytics"], params:[] },
+  teams:            { label:"Teams",            description:"All NBA teams",                            children:["team_detail"], endpoint:"/api/teams", params:[] },
+  players:          { label:"Players",          description:"All players, optionally filtered by team", children:["player_detail"], endpoint:"/api/players", params:[{name:"team_id",type:"int",optional:true}] },
+  standings:        { label:"Standings",        description:"Current conference standings",             children:[], endpoint:"/api/standings", params:[{name:"conference",type:"str",optional:true}] },
+  games:            { label:"Games",            description:"Recent game results",                      children:["game_detail"], endpoint:"/api/games", params:[{name:"date",type:"str",optional:true}] },
+  team_detail:      { label:"Team Detail",      description:"Single team info + roster",                children:["players"], endpoint:"/api/teams/{id}", params:[{name:"id",type:"int",required:true}] },
+  player_detail:    { label:"Player Detail",    description:"Player averages & info",                   children:["game_log"], endpoint:"/api/players/{id}", params:[{name:"id",type:"int",required:true}] },
+  game_log:         { label:"Game Log",         description:"Per-game stats time series",               children:[], endpoint:"/api/players/{id}/gamelog", params:[{name:"id",type:"int",required:true},{name:"n",type:"int",optional:true}] },
+  game_detail:      { label:"Game Detail",      description:"Full box score",                           children:["player_detail"], endpoint:"/api/games/{id}", params:[{name:"id",type:"int",required:true}] },
+  analytics:        { label:"Analytics",        description:"Advanced analytics hub",                   children:["last_night","season_analytics","team_dashboard","lakers_dashboard"], params:[] },
+  last_night:       { label:"Last Night",       description:"Top performers & scores from last night",  children:[], endpoint:"/api/analytics/last-night", params:[] },
+  season_analytics: { label:"Season Analytics", description:"Advanced player & team stats (TS%, NetRtg, USG%)", children:[], endpoint:"/api/analytics/season", params:[] },
+  team_dashboard:   { label:"Team Dashboard",   description:"Standing, roster advanced stats & recent games for any team", children:[], endpoint:"/api/analytics/team/{id}", params:[{name:"id",type:"int",required:true}] },
+  lakers_dashboard: { label:"Lakers",           description:"Lakers dashboard (alias for Team Dashboard)", children:[], endpoint:"/api/analytics/lakers", params:[] },
 };
 
 // ── Node layout positions (hand-tuned radial) ────────────────────────────────
 function computeLayout() {
-  const cx = 480, cy = 320;
+  const cx = 480, cy = 280;
   return {
-    root:          { x: cx,       y: cy },
-    teams:         { x: cx - 220, y: cy - 180 },
-    players:       { x: cx + 220, y: cy - 180 },
-    standings:     { x: cx - 280, y: cy + 120 },
-    games:         { x: cx + 280, y: cy + 120 },
-    team_detail:   { x: cx - 340, y: cy - 60 },
-    player_detail: { x: cx + 100, y: cy - 40 },
-    game_log:      { x: cx + 100, y: cy + 140 },
-    game_detail:   { x: cx + 360, y: cy - 20 },
+    root:             { x: cx,       y: cy },
+    teams:            { x: cx - 220, y: cy - 160 },
+    players:          { x: cx + 220, y: cy - 160 },
+    standings:        { x: cx - 280, y: cy + 100 },
+    games:            { x: cx + 280, y: cy + 100 },
+    team_detail:      { x: cx - 340, y: cy - 40 },
+    player_detail:    { x: cx + 100, y: cy - 20 },
+    game_log:         { x: cx + 100, y: cy + 120 },
+    game_detail:      { x: cx + 360, y: cy },
+    analytics:        { x: cx,       y: cy + 200 },
+    last_night:       { x: cx - 280, y: cy + 330 },
+    season_analytics: { x: cx - 100, y: cy + 390 },
+    team_dashboard:   { x: cx + 100, y: cy + 390 },
+    lakers_dashboard: { x: cx + 280, y: cy + 330 },
   };
 }
 
 // ── Colors per node ──────────────────────────────────────────────────────────
 const NODE_COLORS = {
-  root: '#f97316',
-  teams: '#3b82f6',
-  players: '#22c55e',
-  standings: '#a855f7',
-  games: '#ef4444',
-  team_detail: '#3b82f6',
-  player_detail: '#22c55e',
-  game_log: '#06b6d4',
-  game_detail: '#ef4444',
+  root:             '#f97316',
+  teams:            '#3b82f6',
+  players:          '#22c55e',
+  standings:        '#a855f7',
+  games:            '#ef4444',
+  team_detail:      '#3b82f6',
+  player_detail:    '#22c55e',
+  game_log:         '#06b6d4',
+  game_detail:      '#ef4444',
+  analytics:        '#f59e0b',
+  last_night:       '#fb923c',
+  season_analytics: '#fbbf24',
+  team_dashboard:   '#34d399',
+  lakers_dashboard: '#a78bfa',
 };
 
 createApp({
@@ -794,11 +837,16 @@ createApp({
         const data = json.data;
         responseData.value = data;
 
-        // Auto-detect chartable data
-        if (Array.isArray(data) && data.length > 1) {
-          const numKeys = Object.keys(data[0]).filter(k => typeof data[0][k] === 'number');
+        // Auto-detect chartable data (flat array or first array inside an analytics object)
+        let chartable = Array.isArray(data) && data.length > 1 ? data : null;
+        if (!chartable && data && typeof data === 'object' && !Array.isArray(data)) {
+          const firstArr = Object.values(data).find(v => Array.isArray(v) && v.length > 1 && typeof v[0] === 'object');
+          if (firstArr) chartable = firstArr;
+        }
+        if (chartable) {
+          const numKeys = Object.keys(chartable[0]).filter(k => typeof chartable[0][k] === 'number');
           chartMetrics.value = numKeys;
-          chartData.value = data;
+          chartData.value = chartable;
           activeMetric.value = numKeys[0] || '';
           await nextTick();
           drawChart();
@@ -946,6 +994,23 @@ createApp({
       return flat;
     }
 
+    // When the response is an object (not array), pull out array-valued keys for sub-table display
+    const nestedArrays = computed(() => {
+      const data = responseData.value;
+      if (!data || Array.isArray(data)) return [];
+      return Object.entries(data)
+        .filter(([, v]) => Array.isArray(v) && v.length > 0)
+        .map(([key, arr]) => ({ key, arr }));
+    });
+
+    function flatCols(arr) {
+      if (!arr || !arr.length) return [];
+      return Object.keys(arr[0]).filter(k => {
+        const v = arr[0][k];
+        return typeof v !== 'object' || v === null;
+      });
+    }
+
     function canDrill(row) {
       return row.id !== undefined;
     }
@@ -990,7 +1055,7 @@ createApp({
       apiMap, activeNode, trail, paramValues, loading,
       responseData, rawResponse, showJson,
       chartData, chartMetrics, activeMetric,
-      tableCols,
+      tableCols, nestedArrays, flatCols,
       onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseUp,
       onCanvasClick, onCanvasWheel,
       navigateTo, fetchEndpoint, drawChart,

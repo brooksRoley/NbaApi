@@ -12,7 +12,18 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 CORS(app)
 
-CURRENT_SEASON = "2025-26"
+def _current_nba_season() -> str:
+    """Return the active NBA season string, e.g. '2025-26'.
+    Seasons begin in October, so Oct–Dec belong to the new season year."""
+    now = datetime.now()
+    year = now.year
+    if now.month >= 10:
+        return f"{year}-{str(year + 1)[-2:]}"
+    return f"{year - 1}-{str(year)[-2:]}"
+
+
+CURRENT_SEASON: str = _current_nba_season()
+LAKERS_TEAM_ID = 1610612747
 
 # ── In-Memory Cache ───────────────────────────────────────────────────────────
 
@@ -96,7 +107,40 @@ API_MAP = {
     "root": {
         "label": "NBA API",
         "description": "Entry point",
-        "children": ["teams", "players", "standings", "games"],
+        "children": ["teams", "players", "standings", "games", "analytics"],
+    },
+    "analytics": {
+        "label": "Analytics",
+        "description": "Advanced analytics hub",
+        "children": ["last_night", "season_analytics", "team_dashboard", "lakers_dashboard"],
+    },
+    "last_night": {
+        "label": "Last Night",
+        "endpoint": "/api/analytics/last-night",
+        "description": "Top performers and scores from last night's games",
+        "children": [],
+        "params": [],
+    },
+    "season_analytics": {
+        "label": "Season Analytics",
+        "endpoint": "/api/analytics/season",
+        "description": "Season-wide advanced player and team stats (TS%, eFG%, NetRtg, USG%)",
+        "children": [],
+        "params": [],
+    },
+    "lakers_dashboard": {
+        "label": "Lakers",
+        "endpoint": "/api/analytics/lakers",
+        "description": "Lakers dashboard (alias for /api/analytics/team/1610612747)",
+        "children": [],
+        "params": [],
+    },
+    "team_dashboard": {
+        "label": "Team Dashboard",
+        "endpoint": "/api/analytics/team/{id}",
+        "description": "Standing, roster advanced stats, and recent games for any team",
+        "children": [],
+        "params": [{"name": "id", "type": "int", "required": True}],
     },
     "teams": {
         "label": "Teams",
@@ -387,6 +431,281 @@ def games():
     return jsonify({"data": data, "_meta": {"endpoint": "games"}})
 
 
+def _fetch_last_night_analytics() -> dict:
+    from nba_api.stats.endpoints import leaguegamefinder, leaguedashplayerstats
+
+    def _games_for_date(date_str: str):
+        return leaguegamefinder.LeagueGameFinder(
+            date_from_nullable=date_str,
+            date_to_nullable=date_str,
+            season_nullable=CURRENT_SEASON,
+            season_type_nullable="Regular Season",
+            league_id_nullable="00",
+        ).league_game_finder_results.get_data_frame()
+
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%m/%d/%Y")
+    gf_df = _games_for_date(yesterday)
+    used_date = yesterday
+
+    if gf_df.empty:
+        two_days_ago = (datetime.now() - timedelta(days=2)).strftime("%m/%d/%Y")
+        gf_df = _games_for_date(two_days_ago)
+        used_date = two_days_ago
+
+    if gf_df.empty:
+        return {"date": yesterday, "game_count": 0, "games": [], "top_performers": []}
+
+    # Deduplicate into game summaries (two team rows per game_id)
+    seen: set = set()
+    games = []
+    for gid in gf_df["GAME_ID"].unique():
+        rows = gf_df[gf_df["GAME_ID"] == gid]
+        if len(rows) < 2 or gid in seen:
+            continue
+        seen.add(gid)
+        r1, r2 = rows.iloc[0], rows.iloc[1]
+        home, away = (r1, r2) if "vs." in str(r1["MATCHUP"]) else (r2, r1)
+        s1 = int(home["PTS"]) if home["PTS"] is not None else 0
+        s2 = int(away["PTS"]) if away["PTS"] is not None else 0
+        games.append({
+            "id": int(gid),
+            "date": home["GAME_DATE"],
+            "home": home["TEAM_ABBREVIATION"],
+            "away": away["TEAM_ABBREVIATION"],
+            "home_score": s1,
+            "away_score": s2,
+            "winner": home["TEAM_ABBREVIATION"] if s1 >= s2 else away["TEAM_ABBREVIATION"],
+        })
+
+    # Player stats scoped to just that date (single-game totals)
+    player_df = leaguedashplayerstats.LeagueDashPlayerStats(
+        season=CURRENT_SEASON,
+        per_mode_detailed="Totals",
+        date_from_nullable=used_date,
+        date_to_nullable=used_date,
+    ).league_dash_player_stats.get_data_frame()
+
+    top = player_df[player_df["PTS"] > 0].nlargest(15, "PTS")
+    performers = []
+    for _, row in top.iterrows():
+        pts = int(row["PTS"])
+        fga = int(row["FGA"])
+        fta = int(row["FTA"])
+        denom = 2 * (fga + 0.44 * fta)
+        ts_pct = round(pts / denom * 100, 1) if denom > 0 else None
+        performers.append({
+            "name": row["PLAYER_NAME"],
+            "team": row["TEAM_ABBREVIATION"],
+            "pts": pts,
+            "reb": int(row["REB"]),
+            "ast": int(row["AST"]),
+            "stl": int(row["STL"]),
+            "blk": int(row["BLK"]),
+            "tov": int(row["TOV"]),
+            "fg_pct": round(float(row["FG_PCT"]), 3) if row["FG_PCT"] is not None else 0,
+            "ts_pct": ts_pct,
+            "min": str(row["MIN"]),
+        })
+
+    date_display = gf_df.iloc[0]["GAME_DATE"] if not gf_df.empty else used_date
+    return {
+        "date": date_display,
+        "game_count": len(games),
+        "games": games,
+        "top_performers": performers,
+    }
+
+
+def _fetch_season_analytics() -> dict:
+    from nba_api.stats.endpoints import leaguedashplayerstats, leaguedashteamstats
+
+    # Advanced player stats (min 20 GP)
+    player_df = leaguedashplayerstats.LeagueDashPlayerStats(
+        season=CURRENT_SEASON,
+        per_mode_detailed="PerGame",
+        measure_type_detailed_defense="Advanced",
+    ).league_dash_player_stats.get_data_frame()
+
+    def _safe(val, scale=1, decimals=1):
+        try:
+            return round(float(val) * scale, decimals)
+        except (TypeError, ValueError):
+            return None
+
+    players = [
+        {
+            "id": int(row["PLAYER_ID"]),
+            "name": row["PLAYER_NAME"],
+            "team": row["TEAM_ABBREVIATION"],
+            "gp": int(row["GP"]),
+            "ts_pct": _safe(row["TS_PCT"], 100),
+            "efg_pct": _safe(row["EFG_PCT"], 100),
+            "usg_pct": _safe(row["USG_PCT"], 100),
+            "net_rating": _safe(row["NET_RATING"]),
+            "pie": _safe(row["PIE"], 100),
+            "ast_pct": _safe(row["AST_PCT"], 100),
+            "reb_pct": _safe(row["REB_PCT"], 100),
+        }
+        for _, row in player_df.iterrows()
+        if int(row["GP"]) >= 20
+    ]
+
+    # Advanced team stats
+    team_df = leaguedashteamstats.LeagueDashTeamStats(
+        season=CURRENT_SEASON,
+        per_mode_detailed="PerGame",
+        measure_type_detailed_defense="Advanced",
+    ).league_dash_team_stats.get_data_frame()
+
+    teams = [
+        {
+            "id": int(row["TEAM_ID"]),
+            "name": row["TEAM_NAME"],
+            "net_rating": _safe(row["NET_RATING"]),
+            "off_rating": _safe(row["OFF_RATING"]),
+            "def_rating": _safe(row["DEF_RATING"]),
+            "pace": _safe(row["PACE"]),
+            "ts_pct": _safe(row["TS_PCT"], 100),
+            "efg_pct": _safe(row["EFG_PCT"], 100),
+            "pie": _safe(row["PIE"], 100),
+        }
+        for _, row in team_df.iterrows()
+    ]
+    teams.sort(key=lambda x: (x["net_rating"] or 0), reverse=True)
+
+    return {
+        "season": CURRENT_SEASON,
+        "top_players_ts": sorted(players, key=lambda x: (x["ts_pct"] or 0), reverse=True)[:20],
+        "top_players_net": sorted(players, key=lambda x: (x["net_rating"] or 0), reverse=True)[:20],
+        "top_players_usg": sorted(players, key=lambda x: (x["usg_pct"] or 0), reverse=True)[:20],
+        "teams": teams,
+    }
+
+
+def _fetch_team_analytics(team_id: int) -> dict | None:
+    from nba_api.stats.endpoints import leaguegamefinder, leaguedashplayerstats, leaguedashteamstats
+
+    # Validate team exists
+    all_teams = _get_teams()
+    team_info = next((t for t in all_teams if t["id"] == team_id), None)
+    if team_info is None:
+        return None
+
+    # Standings row for extended record fields
+    standings_df = _cached("standings_df", _fetch_standings_df, ttl=600)
+    team_row = standings_df[standings_df["TeamID"] == team_id]
+    standing: dict = {}
+    if not team_row.empty:
+        r = team_row.iloc[0]
+        standing = {
+            "wins": int(r["WINS"]),
+            "losses": int(r["LOSSES"]),
+            "pct": round(float(r["WinPCT"]), 3),
+            "conference_rank": int(r.get("PlayoffRank", 0)) if r.get("PlayoffRank") is not None else None,
+            "home_record": str(r.get("HOME", "")),
+            "away_record": str(r.get("ROAD", "")),
+            "last_10": str(r.get("L10", "")),
+            "streak": str(r.get("strCurrentStreak", "")),
+        }
+
+    # Recent games (last 10)
+    recent_df = leaguegamefinder.LeagueGameFinder(
+        team_id_nullable=team_id,
+        season_nullable=CURRENT_SEASON,
+        season_type_nullable="Regular Season",
+    ).league_game_finder_results.get_data_frame()
+
+    recent_games = [
+        {
+            "date": row["GAME_DATE"],
+            "matchup": row["MATCHUP"],
+            "wl": row["WL"],
+            "pts": int(row["PTS"]) if row["PTS"] is not None else 0,
+            "plus_minus": int(row["PLUS_MINUS"]) if row["PLUS_MINUS"] is not None else 0,
+            "fg_pct": round(float(row["FG_PCT"]) * 100, 1) if row["FG_PCT"] is not None else 0,
+            "fg3_pct": round(float(row["FG3_PCT"]) * 100, 1) if row["FG3_PCT"] is not None else 0,
+        }
+        for _, row in recent_df.head(10).iterrows()
+    ]
+
+    # Traditional per-game stats for team's players
+    trad_df = leaguedashplayerstats.LeagueDashPlayerStats(
+        season=CURRENT_SEASON,
+        per_mode_detailed="PerGame",
+        team_id_nullable=team_id,
+    ).league_dash_player_stats.get_data_frame()
+
+    # Advanced per-game stats for team's players
+    adv_df = leaguedashplayerstats.LeagueDashPlayerStats(
+        season=CURRENT_SEASON,
+        per_mode_detailed="PerGame",
+        measure_type_detailed_defense="Advanced",
+        team_id_nullable=team_id,
+    ).league_dash_player_stats.get_data_frame()
+
+    adv_map: dict = {int(row["PLAYER_ID"]): row for _, row in adv_df.iterrows()}
+
+    def _s(val, scale=1, decimals=1):
+        try:
+            return round(float(val) * scale, decimals)
+        except (TypeError, ValueError):
+            return None
+
+    roster_stats = []
+    for _, row in trad_df.iterrows():
+        pid = int(row["PLAYER_ID"])
+        adv = adv_map.get(pid)
+        roster_stats.append({
+            "id": pid,
+            "name": row["PLAYER_NAME"],
+            "gp": int(row["GP"]),
+            "min": _s(row["MIN"]),
+            "ppg": _s(row["PTS"]),
+            "rpg": _s(row["REB"]),
+            "apg": _s(row["AST"]),
+            "fg_pct": _s(row["FG_PCT"], 100),
+            "fg3_pct": _s(row["FG3_PCT"], 100),
+            "ft_pct": _s(row["FT_PCT"], 100),
+            "ts_pct": _s(adv.get("TS_PCT"), 100) if adv is not None else None,
+            "usg_pct": _s(adv.get("USG_PCT"), 100) if adv is not None else None,
+            "net_rating": _s(adv.get("NET_RATING")) if adv is not None else None,
+        })
+    roster_stats.sort(key=lambda x: (x["ppg"] or 0), reverse=True)
+
+    # Team-level advanced stats (fetch all, filter to this team)
+    team_adv_df = leaguedashteamstats.LeagueDashTeamStats(
+        season=CURRENT_SEASON,
+        per_mode_detailed="PerGame",
+        measure_type_detailed_defense="Advanced",
+    ).league_dash_team_stats.get_data_frame()
+
+    team_adv_row = team_adv_df[team_adv_df["TEAM_ID"] == team_id]
+    team_advanced: dict = {}
+    if not team_adv_row.empty:
+        r = team_adv_row.iloc[0]
+        team_advanced = {
+            "net_rating": _s(r["NET_RATING"]),
+            "off_rating": _s(r["OFF_RATING"]),
+            "def_rating": _s(r["DEF_RATING"]),
+            "pace": _s(r["PACE"]),
+            "ts_pct": _s(r["TS_PCT"], 100),
+            "efg_pct": _s(r["EFG_PCT"], 100),
+            "pie": _s(r["PIE"], 100),
+        }
+
+    return {
+        "team": team_info,
+        "standing": standing,
+        "team_advanced": team_advanced,
+        "recent_games": recent_games,
+        "roster_stats": roster_stats,
+    }
+
+
+def _fetch_lakers_analytics() -> dict:
+    return _fetch_team_analytics(LAKERS_TEAM_ID)
+
+
 def _fetch_game_detail(game_id: int) -> dict | None:
     from nba_api.stats.endpoints import boxscoretraditionalv3
 
@@ -454,6 +773,36 @@ def game_detail(game_id):
     if data is None:
         return jsonify({"error": "Game not found"}), 404
     return jsonify({"data": data, "_meta": {"endpoint": "game_detail"}})
+
+
+@app.route("/api/analytics/last-night")
+def last_night_analytics():
+    data = _cached("last_night", _fetch_last_night_analytics, ttl=3600)
+    return jsonify({"data": data, "_meta": {"endpoint": "last_night"}})
+
+
+@app.route("/api/analytics/season")
+def season_analytics():
+    data = _cached("season_analytics", _fetch_season_analytics, ttl=3600)
+    return jsonify({"data": data, "_meta": {"endpoint": "season_analytics"}})
+
+
+@app.route("/api/analytics/team/<int:team_id>")
+def team_dashboard(team_id):
+    data = _cached(
+        f"team_dashboard_{team_id}",
+        lambda: _fetch_team_analytics(team_id),
+        ttl=600,
+    )
+    if data is None:
+        return jsonify({"error": "Team not found"}), 404
+    return jsonify({"data": data, "_meta": {"endpoint": "team_dashboard", "team_id": team_id}})
+
+
+@app.route("/api/analytics/lakers")
+def lakers_analytics():
+    data = _cached("lakers_dashboard", _fetch_lakers_analytics, ttl=600)
+    return jsonify({"data": data, "_meta": {"endpoint": "lakers_dashboard"}})
 
 
 @app.route("/")

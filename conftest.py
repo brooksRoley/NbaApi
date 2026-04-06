@@ -44,3 +44,16 @@ def warm_cache(client):
     # Team detail for Nuggets (1610612743)
     client.get("/api/teams/1610612743")
     time.sleep(0.5)
+
+    # Analytics endpoints (best-effort warm-up; failures are non-fatal)
+    try:
+        client.get("/api/analytics/last-night")
+        time.sleep(1.0)
+        client.get("/api/analytics/season")
+        time.sleep(1.5)
+        client.get("/api/analytics/lakers")
+        time.sleep(1.0)
+        client.get("/api/analytics/team/1610612743")  # Nuggets — stable test fixture
+        time.sleep(1.0)
+    except Exception:
+        pass
